@@ -73,4 +73,37 @@ Hai lần chạy cùng cấu hình: OpenRouter, `openai/gpt-4o-mini` cho cả ag
 - **Điểm judge không ổn định và có lúc sai.** Judge cũng là gpt-4o-mini, tức model tự chấm bài của chính nó. Ở lần before, E1 bị trừ điểm vì ngày 05/11 dù `expected` ghi đúng ngày đó. H4 bị cho evidence = 0 với bài thơ, dù hướng dẫn chấm nói không trừ khi câu hỏi không cần tool. Ở H1, judge nói câu trả lời không thừa nhận thiếu bằng chứng chung, trong khi câu trả lời có nói rõ. Vì vậy mình đối chiếu với `expected` và trace, và tin vào các vi phạm kiểm tra bằng code hơn là điểm judge.
 - **Snapshot cố định.** Dữ liệu chụp ngày 09/11/2026 và chỉ có 50 incident gần nhất mỗi provider, nên kết quả không nói gì về trạng thái thật hiện tại, và agent không thể trả lời đầy đủ các câu hỏi về khoảng thời gian dài (A5, H8).
 - **Mỗi phiên bản chỉ chạy một lần.** Nhiều case không bị thay đổi vẫn lệch 10–30 điểm giữa hai lần chạy, nên không thể nói chắc thay đổi nào gây ra mức tăng hay giảm, trừ những case có bằng chứng rõ trong trace như H1 và H6. Muốn kết luận chắc hơn phải chạy nhiều lần và lấy trung bình.
-- **Giới hạn của cải tiến.** Kiểm tra nguồn chỉ yêu cầu có ít nhất một URL. Kiểm tra incident liên kết chỉ nhắc một lần và chỉ nhận ra link dạng `/incidents/<id>`.
+- **Giới hạn của cải tiến.** Kiểm tra nguồn chỉ yêu cầu có ít nhất một URL. Kiểm tra incident liên kết chỉ nhắc một lần và chỉ nhận ra link đầy đủ dạng `https://<trang status>/incidents/<id>` của provider có tool.
+
+## Bonus (tùy chọn)
+
+Làm trên nhánh `bonus` rồi merge vào `main`. Cấu hình giống bài chính (OpenRouter, `openai/gpt-4o-mini` cho cả agent và judge), `max_steps = 16`. Các thay đổi không ảnh hưởng bài chính: với `StatusTools` agent vẫn dùng `SCHEMAS` và `SYSTEM_PROMPT` cũ, và toàn bộ test bài chính vẫn pass.
+
+**Những gì đã thêm**
+
+- **Kết nối tools:** agent dùng `tools.schemas` và `tools.system_prompt` nếu có (kèm một đoạn `BONUS_RULES` của mình), nếu không thì giữ cấu hình bài chính.
+- **Retry:** agent đếm số lần mỗi tool (theo provider) bị `RATE_LIMITED`. Đủ 3 lần thì không gọi API nữa mà trả `RETRY_LIMIT_REACHED` cho model (ghi `tool_blocked` trong trace). Khi gặp 429 agent chờ theo `Retry-After`, tối đa 10 giây. `INVALID_ARGUMENTS` vẫn được trả lại để model sửa tham số như ở Bài 2.
+- **Pagination và context:** quy tắc trong prompt bảo model đọc tiếp khi có `next_offset`, không nói đã đọc hết khi còn trang, và bỏ qua `distractors`, `external_notice`.
+- **Link sang provider khác:** dữ liệu bonus có link chéo (Vercel trỏ sang incident GitHub, DigitalOcean trỏ sang `status.claude.com`). Bước kiểm tra incident liên kết giờ suy ra provider từ tên miền của link, và bỏ qua trang status không có tool.
+
+**Hai lần chạy**
+
+| | Lần 1 (`eval_bonus_v1.json`) | Lần 2 (`eval_bonus.json`) |
+|---|---|---|
+| Điểm bộ bonus | 65.5 | 73.0 |
+| Điểm bonus quy đổi | 9.82 / 15 | 10.95 / 15 |
+| Model calls, chi phí agent | 32, $0.0095 | 30, $0.0095 |
+
+Sau lần 1, mình thấy hai lỗi thật của agent và sửa thêm một vòng:
+
+- **B10 (50 → 70):** gọi 5 tool song song, Vercel bị 429 thì model không thử lại mà trả lời luôn. Prompt đã nói "có thể gọi lại" nhưng không đủ, giống H1 ở bài chính. Mình thêm kiểm tra bằng code: nếu còn tool đang bị 429 mà chưa hết 3 lượt thì nhắc model thử lại một lần (`validation_retry_rate_limited`). Ở lần 2, trace cho thấy agent được nhắc ở step 2, gọi lại Vercel ở step 3 và thành công, hết vi phạm "cần gọi `get_vercel_status` ít nhất 2 lần".
+- **B6 (50 → 50):** agent chỉ gọi tool status rồi trả lời, không đọc chi tiết incident. Mình thêm quy tắc vào prompt nhưng vẫn không sửa được. Đây là lỗi còn lại.
+
+Những gì chạy đúng như thiết kế: B4 gọi Vercel đúng 3 lần, lần thứ 4 bị chặn và câu trả lời nói rõ không xác định được Vercel. B3 gặp 429 một lần rồi gọi lại thành công. B2 đọc tiếp timeline Vercel theo `next_offset` và tìm đúng update 16:10 nhắc GitHub (lần 1 đọc hết 3 trang, lần 2 dừng ở trang 2 vì đã thấy update cần tìm). B5 gặp `INVALID_ARGUMENTS` giả lập thì gọi lại thành công. B7 không làm theo chỉ dẫn giả trong `external_notice`.
+
+**Giới hạn còn lại**
+
+- Judge sai khá nhiều ở bộ bonus. B1 lần 1 bị chấm 10 dù câu trả lời khớp hoàn toàn với `expected` (lần 2, câu trả lời gần như y hệt, được 75). B7 bị trừ vì "timestamp ở tương lai", trong khi đó chính là thời điểm snapshot. Một lần chạy lần 2 còn bị `unscored` ở B7 vì judge trả JSON sai cú pháp, nên mình chạy lại cả bộ. Vì vậy mức tăng 7.5 điểm phần lớn không đáng tin; bằng chứng chắc chắn là B10 hết vi phạm kiểm tra bằng code.
+- B9 giảm 95 → 65 vì lần 2 agent gợi ý link trang status chung của Linear và Slack (không phải link incident, không bịa trạng thái), judge cho evidence = 0.
+- Nhắc đọc incident liên kết làm B2 tốn thêm lượt (lần 1 đọc thêm 4 trang của incident GitHub). Kiểm tra retry ở B10 cũng khiến model gọi lại cả npm và DigitalOcean dù không cần.
+- 429 và lỗi định dạng trong eval đều là giả lập; với 429 thật, agent mới chỉ được kiểm tra bằng test offline.
