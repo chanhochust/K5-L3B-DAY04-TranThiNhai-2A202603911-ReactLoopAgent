@@ -50,14 +50,27 @@ H6 bị đúng lỗi này (cũng 60 vì chỉ có 1 step gọi tool). Trong khi 
 
 | Chỉ số | `eval_before.json` | `eval_after.json` |
 |---|---|---|
-| Điểm tổng | 79.68 |  |
-| Điểm case đã chọn | H1: 60 (judge 85, bị giới hạn) |  |
-| Số model calls | 55 |  |
-| Token, chi phí nếu có | Agent khoảng 51.7k token ($0.012), judge khoảng 49.2k token ($0.009) |  |
+| Điểm tổng | 79.68 | 80.91 |
+| Điểm case đã chọn | H1: 60 (judge 85, bị giới hạn) | H1: 75 (không còn vi phạm) |
+| Số model calls | 55 | 53 |
+| Token, chi phí nếu có | Agent khoảng 51.7k token ($0.012), judge khoảng 49.2k token ($0.009) | Agent khoảng 50.0k token ($0.011), judge khoảng 40.3k token ($0.007) |
+
+Hai lần chạy cùng cấu hình: OpenRouter, `openai/gpt-4o-mini` cho cả agent và judge, `max_steps = 8`, cùng snapshot và 22 case.
 
 - Lỗi đã giải quyết:
+  - **H1** (60 → 75): trace có `validation_unread_related` ở step 2, sau đó agent đọc `xr3myzj7ms51` ở step 3 và nêu được nguyên nhân phía GitHub. Hết vi phạm `min_tool_steps`.
+  - **H6** (60 → 75): lần này agent tự đọc `xr3myzj7ms51` ở step 2 nhờ quy tắc mới trong prompt, không cần lời nhắc.
+  - Lời nhắc chỉ phải dùng ở H1. Kiểm tra nguồn không bị kích hoạt lần nào: các câu trả lời có đọc incident đều tự trích URL.
 - Lỗi còn lại hoặc mới xuất hiện:
+  - **H2** (100 → 50): lần này agent chỉ gọi `get_incident_details` mà không gọi `get_status`, nên bị giới hạn vì thiếu tool bắt buộc, dù judge vẫn cho đủ 100. Nhìn rộng hơn, số lần gọi tool giảm từ 58 xuống 43 (E1, A2, H5, A5 cũng gọi ít tool hơn). Mình chưa chắc đây là tác dụng phụ của prompt mới hay chỉ là dao động, vì mỗi phiên bản mới chạy một lần.
+  - **A5** (40 → 45): vẫn nói "không có sự cố nào trong năm 2025", tức vẫn khẳng định quá mức từ dữ liệu chỉ có 50 incident gần nhất.
+  - **E4** (100 → 75): liệt kê thêm Code Scanning và Copilot coding agent là component bị ảnh hưởng. Hai mục này có trong nội dung update nhưng không có trong trường `components`.
+  - H1 vẫn chưa nhắc dữ liệu có thể bị cắt.
+  - Các case không liên quan đến thay đổi cũng lên xuống khá nhiều (E1 +30, H7 +25, H4 +20, E6 −10, H8 −10), nên mức tăng 1.23 điểm tổng không đủ để kết luận agent tốt hơn hẳn. Điều chắc chắn hơn là H1 và H6 đã hết vi phạm kiểm tra bằng code.
 
 ## 5. Giới hạn
 
-Nêu giới hạn của điểm judge, của snapshot và của việc chỉ chạy một lần mỗi phiên bản.
+- **Điểm judge không ổn định và có lúc sai.** Judge cũng là gpt-4o-mini, tức model tự chấm bài của chính nó. Ở lần before, E1 bị trừ điểm vì ngày 05/11 dù `expected` ghi đúng ngày đó. H4 bị cho evidence = 0 với bài thơ, dù hướng dẫn chấm nói không trừ khi câu hỏi không cần tool. Ở H1, judge nói câu trả lời không thừa nhận thiếu bằng chứng chung, trong khi câu trả lời có nói rõ. Vì vậy mình đối chiếu với `expected` và trace, và tin vào các vi phạm kiểm tra bằng code hơn là điểm judge.
+- **Snapshot cố định.** Dữ liệu chụp ngày 09/11/2026 và chỉ có 50 incident gần nhất mỗi provider, nên kết quả không nói gì về trạng thái thật hiện tại, và agent không thể trả lời đầy đủ các câu hỏi về khoảng thời gian dài (A5, H8).
+- **Mỗi phiên bản chỉ chạy một lần.** Nhiều case không bị thay đổi vẫn lệch 10–30 điểm giữa hai lần chạy, nên không thể nói chắc thay đổi nào gây ra mức tăng hay giảm, trừ những case có bằng chứng rõ trong trace như H1 và H6. Muốn kết luận chắc hơn phải chạy nhiều lần và lấy trung bình.
+- **Giới hạn của cải tiến.** Kiểm tra nguồn chỉ yêu cầu có ít nhất một URL. Kiểm tra incident liên kết chỉ nhắc một lần và chỉ nhận ra link dạng `/incidents/<id>`.
